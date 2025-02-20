@@ -1,0 +1,10 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: binance_bot
+    restart: always
+    env_file: .env
+    volumes:
+      - ./app:/app  # Монтируем ТОЛЬКО папку appdocker-compose up --build -d

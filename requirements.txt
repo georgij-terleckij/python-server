@@ -1,1 +1,7 @@
+python-binance
+pandas
+numpy
 pyTelegramBotAPI
+asyncio
+python-dotenv
+matplotlib

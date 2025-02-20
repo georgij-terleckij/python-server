@@ -1,4 +1,3 @@
-docker build -t server_app  .<br>
-docker run --rm server_app
-
-testjo911bot
+docker-compose up --build -d
+docker-compose down
+docker exec -it binance_bot ls -lah /app
