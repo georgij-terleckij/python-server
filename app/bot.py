@@ -5,18 +5,22 @@ import matplotlib.pyplot as plt
 from decimal import Decimal, ROUND_DOWN
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
-from trading import get_price, place_order, get_open_orders, check_market, fetch_historical_data, get_balance, place_test_order, make_order , fetch_candlestick_data
-from indicators import calculate_rsi
+from trading import get_price, place_order, get_open_orders, check_market, fetch_historical_data, get_balance, \
+    place_test_order, make_order, fetch_candlestick_data
+from indicators import calculate_rsi, detect_crash_reversal, combined_market_analysis
 from config import TELEGRAM_TOKEN, SYMBOL
 from logger import logger
 import pandas as pd
 from binance.client import Client
-from config import API_KEY, API_SECRET
+from config import API_KEY, API_SECRET, CHAT_ID
 from bot.keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
 
-CHAT_ID = 622553104
 bot = AsyncTeleBot(TELEGRAM_TOKEN)
 client = Client(API_KEY, API_SECRET)
+
+
+def is_authorized(user_id):
+    return str(user_id) == CHAT_ID
 
 
 @bot.message_handler(commands=["start", "menu"])
@@ -27,6 +31,13 @@ async def send_menu(message):
     text = "Выберите действие:"
     await bot.send_message(message.chat.id, text, reply_markup=get_main_keyboard())
 
+@bot.message_handler(func=lambda message: message.text == "📊 Анализ рынка")
+async def market_analysis(message):
+    data = fetch_historical_data("BTCUSDT", interval="15m", limit=50)
+    analysis = combined_market_analysis(data)
+    await bot.send_message(message.chat.id, f"📊 Анализ рынка:\n\n{analysis}")
+
+
 @bot.message_handler(func=lambda message: message.text == "📊 Курс")
 async def send_price(message):
     """
@@ -36,31 +47,27 @@ async def send_price(message):
     await bot.send_message(message.chat.id, f"Текущий курс BTC: {price} USDT", reply_markup=get_main_keyboard())
 
 
-# @bot.message_handler(commands=["buy"])
-# async def buy_order(message):
-#     order = place_order("BUY")
-#     await bot.send_message(message.chat.id, f"Ордер на покупку размещен! {order}")
-
-# @bot.message_handler(func=lambda message: message.text == "📈 Купить")
-# async def buy_order(message):
-#     """
-#     Покупка BTC.
-#     """
-#     order = place_order("BUY")
-#     await bot.send_message(message.chat.id, f"Ордер на покупку размещен! {order}", reply_markup=get_main_keyboard())
-
 @bot.message_handler(func=lambda message: message.text == "📈 Купить")
 async def buy_menu(message):
     """
     Открываем меню выбора способа покупки.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     await bot.send_message(message.chat.id, "Выберите способ покупки:", reply_markup=get_buy_menu())
+
 
 @bot.message_handler(func=lambda message: message.text == "💰 Купить по текущему курсу")
 async def buy_now_menu(message):
     """
     Меню с шагами покупки (25%, 50%, 75%, 100%).
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     usdt_balance = get_balance("USDT")
     price = get_price()
     if usdt_balance < 10:  # Проверка, есть ли деньги
@@ -73,19 +80,27 @@ async def buy_now_menu(message):
         keyboard.add(KeyboardButton(f"{percent}% ({amount} BTC)"))
 
     keyboard.add(KeyboardButton("🔙 Назад в меню"))
-    await bot.send_message(message.chat.id, f"Выберите количество USDT для покупки по {price} BTC:", reply_markup=keyboard)
+    await bot.send_message(message.chat.id, f"Выберите количество USDT для покупки по {price} BTC:",
+                           reply_markup=keyboard)
+
 
 @bot.message_handler(func=lambda message: message.text == "🎯 Купить по указанному курсу")
 async def ask_price(message):
     """
     Запрашиваем у пользователя цену.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     await bot.send_message(message.chat.id, "Введите цену, по которой хотите оформит ордер BTC:")
+
     @bot.message_handler(content_types=["text"])
     async def process_buy_step(msg):
         quantity = msg.text.strip()
         await bot.send_message(msg.chat.id, f"Вы ввели {quantity} BTC!")
         await process_custom_price(msg)
+
 
 async def process_custom_price(message):
     """
@@ -96,25 +111,32 @@ async def process_custom_price(message):
         usdt_balance = get_balance("USDT")
         await bot.send_message(message.chat.id, f"Текущий баланс: {usdt_balance} USDT")
         if usdt_balance < 10:
-            await bot.send_message(message.chat.id, "Недостаточно средств для покупки! 🔴", reply_markup=get_main_keyboard())
+            await bot.send_message(message.chat.id, "Недостаточно средств для покупки! 🔴",
+                                   reply_markup=get_main_keyboard())
             return
 
         keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
         for percent in [25, 50, 75, 100]:
             amount = round((usdt_balance * percent / 100), 2)
             quantity = Decimal(usdt_balance * percent / 100).quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
-            keyboard.add(KeyboardButton(f"Купить {percent}% ({quantity}:BTC={amount}:USDT) Price:{price}") )
+            keyboard.add(KeyboardButton(f"Купить {percent}% ({quantity}:BTC={amount}:USDT) Price:{price}"))
 
         keyboard.add(KeyboardButton("🔙 Назад в меню"))
-        await bot.send_message(message.chat.id, f"Выберите количество USDT для покупки по {price} :", reply_markup=keyboard)
+        await bot.send_message(message.chat.id, f"Выберите количество USDT для покупки по {price} :",
+                               reply_markup=keyboard)
     except ValueError:
         await bot.send_message(message.chat.id, "Некорректное значение! Введите число.", reply_markup=get_buy_menu())
+
 
 @bot.message_handler(func=lambda message: message.text.startswith(("Купить")))
 async def buy_selected_amount(message):
     """
     Обрабатываем выбор пользователя и создаем ордер.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     try:
         pattern = r"\(([\d.]+):BTC=([\d.]+):USDT\) Price:([\d.]+)"
         match = re.search(pattern, message.text)
@@ -123,7 +145,7 @@ async def buy_selected_amount(message):
             btc = float(match.group(1))
             usdt = float(match.group(2))
             price = float(match.group(3))
-            order = make_order("BUY",btc, price)
+            order = make_order("BUY", btc, price)
             await bot.send_message(message.chat.id, f"✅ Ордер на {btc} BTC размещен!\n{order}",
                                    reply_markup=get_main_keyboard())
         else:
@@ -131,9 +153,11 @@ async def buy_selected_amount(message):
     except Exception as e:
         await bot.send_message(message.chat.id, f"Ошибка при создании ордера: {e}", reply_markup=get_main_keyboard())
 
+
 @bot.message_handler(func=lambda message: message.text == "🔙 Назад в меню")
 async def back_to_menu(message):
     await send_menu(message)
+
 
 # @bot.message_handler(func=lambda message: message.text == "📉 Продать")
 # async def sell_order(message):
@@ -148,13 +172,22 @@ async def sell_menu(message):
     """
     Открываем меню выбора способа продажи.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     await bot.send_message(message.chat.id, "Выберите способ продажи:", reply_markup=get_sell_menu())
+
 
 @bot.message_handler(func=lambda message: message.text == "💰 Продать по текущему курсу")
 async def sell_now_menu(message):
     """
     Меню с шагами продажи (25%, 50%, 75%, 100%).
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     btc_balance = get_balance("BTC")
     price = get_price()
     await bot.send_message(message.chat.id, f"Текущий курс BTC: {price} USDT", reply_markup=get_main_keyboard())
@@ -175,17 +208,24 @@ async def sell_now_menu(message):
     # keyboard.add(KeyboardButton("🔙 Назад в меню"))
     # await bot.send_message(message.chat.id, f"Выберите количество BTC для продажи по {price} USDT:", reply_markup=keyboard)
 
+
 @bot.message_handler(func=lambda message: message.text == "🎯 Продать по указанному курсу")
 async def ask_sell_price(message):
     """
     Запрашиваем у пользователя цену.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     await bot.send_message(message.chat.id, "Введите цену, по которой хотите продать BTC:")
+
     @bot.message_handler(content_types=["text"])
     async def process_buy_step(msg):
         quantity = msg.text.strip()
         await bot.send_message(msg.chat.id, f"Вы ввели {quantity} BTC!")
         await process_custom_sell_price(msg)
+
 
 async def process_custom_sell_price(message):
     """
@@ -206,15 +246,21 @@ async def process_custom_sell_price(message):
             keyboard.add(KeyboardButton(f"Продать  {percent}% ({quantity}:BTC={amount}:USDT) Price:{price}"))
 
         keyboard.add(KeyboardButton("🔙 Назад в меню"))
-        await bot.send_message(message.chat.id, f"Выберите количество BTC для продажи по {price} USDT:", reply_markup=keyboard)
+        await bot.send_message(message.chat.id, f"Выберите количество BTC для продажи по {price} USDT:",
+                               reply_markup=keyboard)
     except ValueError:
         await bot.send_message(message.chat.id, "Некорректное значение! Введите число.", reply_markup=get_sell_menu())
+
 
 @bot.message_handler(func=lambda message: message.text.startswith("Продать"))
 async def sell_selected_amount(message):
     """
     Обрабатываем выбор пользователя и создаем ордер на продажу.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     try:
         pattern = r"\(([\d.]+):BTC=([\d.]+):USDT\) Price:([\d.]+)"
         match = re.search(pattern, message.text)
@@ -226,7 +272,8 @@ async def sell_selected_amount(message):
             order = make_order("SELL", btc, price)
         else:
             return None, None, None
-        await bot.send_message(message.chat.id, f"✅ Ордер на продажу {btc} BTC размещен!\n{order}", reply_markup=get_main_keyboard())
+        await bot.send_message(message.chat.id, f"✅ Ордер на продажу {btc} BTC размещен!\n{order}",
+                               reply_markup=get_main_keyboard())
     except Exception as e:
         await bot.send_message(message.chat.id, f"Ошибка при создании ордера: {e}", reply_markup=get_main_keyboard())
 
@@ -236,6 +283,10 @@ async def open_orders(message):
     """
     Показывает список открытых ордеров.
     """
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
     orders = get_open_orders()
     if orders:
         text = "\n".join([f"ID: {o['orderId']}, Сторона: {o['side']}, Цена: {o['price']}" for o in orders])
@@ -253,6 +304,7 @@ async def send_rsi(message):
     # rsi_value = calculate_rsi(data)
     rsi = await fetch_and_calculate_rsi()
     await bot.send_message(message.chat.id, f"Текущий RSI: {rsi:.2f}", reply_markup=get_main_keyboard())
+
 
 @bot.message_handler(func=lambda message: message.text == "📊 График")
 async def send_chart(message):
@@ -279,7 +331,8 @@ async def send_chart(message):
 
         price = get_price()
 
-        await bot.send_photo(message.chat.id, img_io, caption=f"📊 15-минутный график BTC/USDT. Текущий курс BTC: {price} USDT")
+        await bot.send_photo(message.chat.id, img_io,
+                             caption=f"📊 15-минутный график BTC/USDT. Текущий курс BTC: {price} USDT")
 
     except Exception as e:
         await bot.send_message(message.chat.id, f"Ошибка при загрузке графика: {e}")
@@ -299,6 +352,7 @@ async def fetch_and_calculate_rsi():
         logger.error(f"Ошибка получения RSI: {e}")
         return None
 
+
 async def rsi_alert_loop():
     """ Отслеживаем RSI и отправляем алерты в Телеграм """
     while True:
@@ -309,6 +363,7 @@ async def rsi_alert_loop():
             elif rsi > 70:
                 await bot.send_message(CHAT_ID, f"🟢 RSI = {rsi:.2f} (перекуплен!) 🚨")
         await asyncio.sleep(60)  # Проверяем раз в час
+
 
 async def market_watcher():
     """
@@ -323,11 +378,20 @@ async def market_watcher():
             print(f"Ошибка в market_watcher: {e}")
         await asyncio.sleep(60)  # Ждём 15 минут (900 секунд)
 
+async def monitor_market():
+    while True:
+        data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
+        if detect_crash_reversal(data):
+            await bot.send_message(CHAT_ID, "📉 Обнаружен резкий разворот! Возможен рост!")
+        await asyncio.sleep(60)  # Мониторим каждую минуту
+
 
 async def main():
-    # asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
-    asyncio.create_task(market_watcher())  # Запускаем фоновый процесс анализа рынка
+    asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
+    # asyncio.create_task(market_watcher())  # Запускаем фоновый процесс анализа рынка
+    asyncio.create_task(monitor_market())
     await bot.polling()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

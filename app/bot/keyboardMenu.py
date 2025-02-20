@@ -7,6 +7,7 @@ def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(KeyboardButton("📊 Курс"), KeyboardButton("📈 Купить"), KeyboardButton("📉 Продать"))
     keyboard.add(KeyboardButton("📑 Ордеры"), KeyboardButton("📊 RSI"), KeyboardButton("📊 График"))
+    keyboard.add(KeyboardButton("📊 Анализ рынка"))
     return keyboard
 
 def get_buy_menu():
