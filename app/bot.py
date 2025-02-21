@@ -17,7 +17,7 @@ from bot.keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
 
 bot = AsyncTeleBot(TELEGRAM_TOKEN)
 client = Client(API_KEY, API_SECRET)
-
+monitoring = True
 
 def is_authorized(user_id):
     return str(user_id) == CHAT_ID
@@ -341,7 +341,7 @@ async def send_chart(message):
 async def fetch_and_calculate_rsi():
     """ Получаем исторические данные и считаем RSI """
     try:
-        klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=30)
+        klines = client.get_klines(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_15MINUTE, limit=30)
         df = pd.DataFrame(klines, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time",
                                            "quote_asset_volume", "number_of_trades", "taker_buy_base",
                                            "taker_buy_quote", "ignore"])
@@ -378,16 +378,35 @@ async def market_watcher():
             print(f"Ошибка в market_watcher: {e}")
         await asyncio.sleep(60)  # Ждём 15 минут (900 секунд)
 
+# async def monitor_market():
+#     while True:
+#         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
+#         if detect_crash_reversal(data):
+#             await bot.send_message(CHAT_ID, "📉 Обнаружен резкий разворот! Возможен рост!")
+#         await asyncio.sleep(60)  # Мониторим каждую минуту
+
+@bot.message_handler(func=lambda message: message.text == 'Старт/Стоп мониторинг')
+async def toggle_monitoring(message):
+    global monitoring
+    if monitoring:
+        monitoring = False
+        await bot.send_message(message.chat.id, 'Мониторинг остановлен.')
+    else:
+        monitoring = True
+        await bot.send_message(message.chat.id, 'Мониторинг запущен.')
+        await monitor_market()
+
+
 async def monitor_market():
-    while True:
+    while monitoring:
         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
         if detect_crash_reversal(data):
             await bot.send_message(CHAT_ID, "📉 Обнаружен резкий разворот! Возможен рост!")
-        await asyncio.sleep(60)  # Мониторим каждую минуту
+        await asyncio.sleep(60)
 
 
 async def main():
-    asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
+    # asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
     # asyncio.create_task(market_watcher())  # Запускаем фоновый процесс анализа рынка
     asyncio.create_task(monitor_market())
     await bot.polling()
