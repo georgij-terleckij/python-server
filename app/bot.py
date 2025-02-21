@@ -2,25 +2,43 @@ import asyncio
 import re
 import io
 import matplotlib.pyplot as plt
+from database import log_to_db
 from decimal import Decimal, ROUND_DOWN
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from trading import get_price, place_order, get_open_orders, check_market, fetch_historical_data, get_balance, \
-    place_test_order, make_order, fetch_candlestick_data
+    make_order, fetch_candlestick_data, start_ws_monitoring, stop_ws_monitoring, monitoring
 from indicators import calculate_rsi, detect_crash_reversal, combined_market_analysis
 from config import TELEGRAM_TOKEN, SYMBOL
 from logger import logger
 import pandas as pd
 from binance.client import Client
 from config import API_KEY, API_SECRET, CHAT_ID
-from bot.keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
+from keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
 
 bot = AsyncTeleBot(TELEGRAM_TOKEN)
 client = Client(API_KEY, API_SECRET)
-monitoring = True
+# monitoring = True
+
 
 def is_authorized(user_id):
     return str(user_id) == CHAT_ID
+
+
+def is_monitoring():
+    return monitoring
+
+
+def start_monitoring():
+    global monitoring
+    if not monitoring:
+        monitoring = True
+        asyncio.create_task(monitor_market())
+
+
+def stop_monitoring():
+    global monitoring
+    monitoring = False
 
 
 @bot.message_handler(commands=["start", "menu"])
@@ -30,6 +48,7 @@ async def send_menu(message):
     """
     text = "Выберите действие:"
     await bot.send_message(message.chat.id, text, reply_markup=get_main_keyboard())
+
 
 @bot.message_handler(func=lambda message: message.text == "📊 Анализ рынка")
 async def market_analysis(message):
@@ -47,7 +66,7 @@ async def send_price(message):
     await bot.send_message(message.chat.id, f"Текущий курс BTC: {price} USDT", reply_markup=get_main_keyboard())
 
 
-@bot.message_handler(func=lambda message: message.text == "📈 Купить")
+@bot.message_handler(func=lambda message: message.text == "📉 Купить")
 async def buy_menu(message):
     """
     Открываем меню выбора способа покупки.
@@ -158,16 +177,7 @@ async def buy_selected_amount(message):
 async def back_to_menu(message):
     await send_menu(message)
 
-
-# @bot.message_handler(func=lambda message: message.text == "📉 Продать")
-# async def sell_order(message):
-#     """
-#     Продажа BTC.
-#     """
-#     order = place_order("SELL")
-#     await bot.send_message(message.chat.id, f"Ордер на продажу размещен! {order}", reply_markup=get_main_keyboard())
-
-@bot.message_handler(func=lambda message: message.text == "📉 Продать")
+@bot.message_handler(func=lambda message: message.text == "📈 Продать")
 async def sell_menu(message):
     """
     Открываем меню выбора способа продажи.
@@ -189,24 +199,17 @@ async def sell_now_menu(message):
         return
 
     btc_balance = get_balance("BTC")
-    price = get_price()
-    await bot.send_message(message.chat.id, f"Текущий курс BTC: {price} USDT", reply_markup=get_main_keyboard())
-
     if btc_balance < 0.0001:  # Проверка, есть ли BTC для продажи
         await bot.send_message(message.chat.id, "Недостаточно BTC для продажи! 🔴", reply_markup=get_main_keyboard())
         return
+
+    price = get_price()
+    await bot.send_message(message.chat.id, f"Текущий курс BTC: {price} USDT", reply_markup=get_main_keyboard())
+
     quantity = Decimal(btc_balance).quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
     order = place_order("SELL", quantity)
     await bot.send_message(message.chat.id, f"✅ Ордер на продажу {quantity} BTC размещен!\n{order}",
                            reply_markup=get_main_keyboard())
-
-    # keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    # for percent in [25, 50, 75, 100]:
-    #     amount = round(btc_balance * percent / 100, 6)
-    #     keyboard.add(KeyboardButton(f"{percent}% ({amount} BTC)"))
-    #
-    # keyboard.add(KeyboardButton("🔙 Назад в меню"))
-    # await bot.send_message(message.chat.id, f"Выберите количество BTC для продажи по {price} USDT:", reply_markup=keyboard)
 
 
 @bot.message_handler(func=lambda message: message.text == "🎯 Продать по указанному курсу")
@@ -378,6 +381,7 @@ async def market_watcher():
             print(f"Ошибка в market_watcher: {e}")
         await asyncio.sleep(60)  # Ждём 15 минут (900 секунд)
 
+
 # async def monitor_market():
 #     while True:
 #         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
@@ -396,16 +400,61 @@ async def toggle_monitoring(message):
         await bot.send_message(message.chat.id, 'Мониторинг запущен.')
         await monitor_market()
 
-
 async def monitor_market():
     while monitoring:
+        price = get_price()
+        # log_to_db("INFO", f"Текущая цена BTC: {price}")
         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
-        if detect_crash_reversal(data):
+        if detect_crash_reversal(data, 1):
             await bot.send_message(CHAT_ID, "📉 Обнаружен резкий разворот! Возможен рост!")
         await asyncio.sleep(60)
 
+@bot.message_handler(func=lambda message: message.text == '🚀 Авто продажа')
+async def sell_auto_bot(message):
+    if not is_authorized(message.chat.id):
+        await bot.send_message(message.chat.id, "⛔ У вас нет прав на выполнение этой команды.")
+        return
+
+    await bot.send_message(message.chat.id, "Введите цену, по которой хотите продать BTC:")
+
+    @bot.message_handler(content_types=["text"])
+    async def process_sell_step(msg):
+        try:
+            price = float(msg.text.strip())
+            start_ws_monitoring(price)
+            await bot.send_message(msg.chat.id, f"🎯 Ожидаем достижения цены {price} USDT...")
+        except ValueError:
+            await bot.send_message(msg.chat.id, "❌ Некорректное значение! Введите число.")
+
+
+@bot.message_handler(commands=["sell_status"])
+async def check_sell_status(message):
+    """Проверяет статус авто-продажи"""
+    if monitoring:
+        await bot.send_message(message.chat.id, f"✅ Авто-продажа активна! Ждём цену: {target_price} USDT")
+    else:
+        await bot.send_message(message.chat.id, "⛔ Авто-продажа отключена.")
+
+@bot.message_handler(commands=["sell_cancel"])
+async def cancel_auto_sell(message):
+    """Отменяет авто-продажу"""
+    if monitoring:
+        stop_ws_monitoring()
+        await bot.send_message(message.chat.id, "🚫 Авто-продажа отменена!")
+    else:
+        await bot.send_message(message.chat.id, "⛔ Авто-продажа и так отключена.")
+
+
+@bot.message_handler(func=lambda message: message.text == "📊 Статус авто-продажи")
+async def check_auto_sell_button(message):
+    await check_sell_status(message)
+
+@bot.message_handler(func=lambda message: message.text == "🛑 Отмена авто-продажи")
+async def cancel_auto_sell_button(message):
+    await cancel_auto_sell(message)
 
 async def main():
+    logger.info("Бот запущен")
     # asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
     # asyncio.create_task(market_watcher())  # Запускаем фоновый процесс анализа рынка
     asyncio.create_task(monitor_market())

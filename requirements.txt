@@ -5,3 +5,7 @@ pyTelegramBotAPI
 asyncio
 python-dotenv
 matplotlib
+
+
+flask
+mysql-connector-python

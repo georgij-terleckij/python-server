@@ -5,7 +5,7 @@ def get_main_keyboard():
     Создаёт клавиатуру с основными кнопками.
     """
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("📊 Курс"), KeyboardButton("📈 Купить"), KeyboardButton("📉 Продать"))
+    keyboard.add(KeyboardButton("📊 Курс"), KeyboardButton("📉 Купить"), KeyboardButton("📈 Продать"))
     keyboard.add(KeyboardButton("📑 Ордеры"), KeyboardButton("📊 RSI"), KeyboardButton("📊 График"))
     keyboard.add(KeyboardButton("📊 Анализ рынка"), KeyboardButton('Старт/Стоп мониторинг'))
     return keyboard
@@ -25,5 +25,6 @@ def get_sell_menu():
     """
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(KeyboardButton("💰 Продать по текущему курсу"), KeyboardButton("🎯 Продать по указанному курсу"))
+    keyboard.add(KeyboardButton("📊 Статус авто-продажи"), KeyboardButton("🚀 Авто продажа"), KeyboardButton("🛑 Отмена авто-продажи"))
     keyboard.add(KeyboardButton("🔙 Назад в меню"))
     return keyboard

@@ -1,10 +1,44 @@
-version: "3.8"
+version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_db
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: bot
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: always
+
   bot:
     build: .
     container_name: binance_bot
-    restart: always
-    env_file: .env
+    depends_on:
+      - mysql  # Ждём MySQL перед стартом бота
     volumes:
-      - ./app:/app  # Монтируем ТОЛЬКО папку appdocker-compose up --build -d
+      - ./logs:/app/logs
+    restart: always
+    command: python app/bot.py
+
+  flask:
+    build: .
+    container_name: flask_app
+    depends_on:
+      - mysql  # Ждём MySQL перед стартом Flask
+      - bot
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+    command: python app/flask_app.py
+
+volumes:
+  mysql_data:

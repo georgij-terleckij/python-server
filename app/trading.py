@@ -1,13 +1,100 @@
 from binance.client import Client
 import pandas as pd
 import numpy as np
+import asyncio
+import concurrent.futures
 import time
+from database import log_to_db
+from binance import ThreadedWebsocketManager
 from config import API_KEY, API_SECRET, SYMBOL, AMOUNT
 from logger import logger
 from indicators import detect_crash_reversal
 
 client = Client(API_KEY, API_SECRET)
 
+monitoring = False  # Флаг отслеживания цены
+target_price = None
+ws_manager = None
+latest_price = None  # Глобальная переменная для хранения последней цены
+
+
+def start_ws_monitoring(price):
+    """Запускает WebSocket для отслеживания цены через поток"""
+    global monitoring, target_price, ws_manager
+    target_price = float(price)
+    monitoring = True
+
+    # Запускаем WebSocket в отдельном потоке
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(executor, start_ws)
+
+def start_ws():
+    """Запускает WebSocket в отдельном потоке"""
+    global ws_manager
+    ws_manager = ThreadedWebsocketManager()
+    ws_manager.start()
+    ws_manager.start_symbol_ticker_socket(callback=handle_ws_message, symbol=SYMBOL)
+
+
+def stop_ws_monitoring():
+    """Останавливает WebSocket мониторинг"""
+    global monitoring, ws_manager
+    monitoring = False
+    if ws_manager:
+        ws_manager.stop()
+        ws_manager = None
+
+def handle_ws_message(msg):
+    """Обрабатывает входящие данные с Binance WebSocket"""
+    global monitoring, latest_price
+    if not monitoring:
+        return
+
+    latest_price = float(msg["c"])  # Обновляем глобальную переменную
+    print(f"🔥 Текущая цена: {latest_price} USDT")
+
+    # Запускаем проверку в уже существующем loop
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        loop.create_task(check_sell_trigger(latest_price))
+    else:
+        asyncio.run(check_sell_trigger(latest_price))
+
+async def check_sell_trigger(price):
+    """Проверяет условия для продажи"""
+    global monitoring, target_price
+
+    if price >= target_price:
+        print(f"🎯 Цена достигла {target_price}, начинаем анализ тренда...")
+        await monitor_price_trend()
+
+async def monitor_price_trend():
+    """Следим за ценой 10 секунд и ищем момент максимума"""
+    global monitoring, target_price
+    max_price = None
+
+    for _ in range(10):
+        await asyncio.sleep(1)
+        latest_price = get_latest_price()
+        if max_price is None or latest_price > max_price:
+            max_price = latest_price
+        else:
+            print(f"📉 Цена начала падать: {latest_price}, продаём!")
+            # place_order("SELL", 0.001)  # Продаём 0.001 BTC
+            log_to_db("SELL",f"Текущая цена BTC: {latest_price} Залочено {target_price}")
+            stop_ws_monitoring()
+            return
+
+    print(f"⏳ 10 секунд прошло, продаём по {max_price}!")
+    # place_order("SELL", 0.001)
+    log_to_db("SELL", f"Текущая цена BTC: {max_price} Залочено {target_price}")
+    stop_ws_monitoring()
+
+def get_latest_price():
+    """Получает текущую цену BTC (из WebSocket)"""
+    return latest_price
+    # return float(ws_manager.tickers[SYMBOL]["c"])
 
 def get_price():
     """Получаем текущую цену BTC"""
