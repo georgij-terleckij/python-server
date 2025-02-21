@@ -2,25 +2,43 @@ import asyncio
 import re
 import io
 import matplotlib.pyplot as plt
+from database import log_to_db
 from decimal import Decimal, ROUND_DOWN
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from trading import get_price, place_order, get_open_orders, check_market, fetch_historical_data, get_balance, \
-    place_test_order, make_order, fetch_candlestick_data
+    make_order, fetch_candlestick_data
 from indicators import calculate_rsi, detect_crash_reversal, combined_market_analysis
 from config import TELEGRAM_TOKEN, SYMBOL
 from logger import logger
 import pandas as pd
 from binance.client import Client
 from config import API_KEY, API_SECRET, CHAT_ID
-from bot.keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
+from keyboardMenu import get_main_keyboard, get_buy_menu, get_sell_menu
 
 bot = AsyncTeleBot(TELEGRAM_TOKEN)
 client = Client(API_KEY, API_SECRET)
 monitoring = True
 
+
 def is_authorized(user_id):
     return str(user_id) == CHAT_ID
+
+
+def is_monitoring():
+    return monitoring
+
+
+def start_monitoring():
+    global monitoring
+    if not monitoring:
+        monitoring = True
+        asyncio.create_task(monitor_market())
+
+
+def stop_monitoring():
+    global monitoring
+    monitoring = False
 
 
 @bot.message_handler(commands=["start", "menu"])
@@ -30,6 +48,7 @@ async def send_menu(message):
     """
     text = "Выберите действие:"
     await bot.send_message(message.chat.id, text, reply_markup=get_main_keyboard())
+
 
 @bot.message_handler(func=lambda message: message.text == "📊 Анализ рынка")
 async def market_analysis(message):
@@ -378,6 +397,7 @@ async def market_watcher():
             print(f"Ошибка в market_watcher: {e}")
         await asyncio.sleep(60)  # Ждём 15 минут (900 секунд)
 
+
 # async def monitor_market():
 #     while True:
 #         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
@@ -399,6 +419,8 @@ async def toggle_monitoring(message):
 
 async def monitor_market():
     while monitoring:
+        price = get_price()
+        log_to_db("INFO", f"Текущая цена BTC: {price}")
         data = fetch_historical_data("BTCUSDT", interval="1m", limit=50)
         if detect_crash_reversal(data):
             await bot.send_message(CHAT_ID, "📉 Обнаружен резкий разворот! Возможен рост!")
@@ -406,6 +428,7 @@ async def monitor_market():
 
 
 async def main():
+    logger.info("Бот запущен")
     # asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
     # asyncio.create_task(market_watcher())  # Запускаем фоновый процесс анализа рынка
     asyncio.create_task(monitor_market())
