@@ -5,6 +5,7 @@ import asyncio
 import concurrent.futures
 import time
 from database import log_to_db
+from notifications import send_telegram_notification
 from binance import ThreadedWebsocketManager
 from config import API_KEY, API_SECRET, SYMBOL, AMOUNT
 from logger import logger
@@ -41,6 +42,7 @@ def stop_ws_monitoring():
     """Останавливает WebSocket мониторинг"""
     global monitoring, ws_manager
     monitoring = False
+
     if ws_manager:
         ws_manager.stop()
         ws_manager = None
@@ -71,25 +73,47 @@ async def check_sell_trigger(price):
 
 async def monitor_price_trend():
     """Следим за ценой 10 секунд и ищем момент максимума"""
-    global monitoring, target_price
+    global monitoring
     max_price = None
+    start_price = get_latest_price()  # Запоминаем стартовую цену
 
-    for _ in range(10):
+    for i in range(10):
         await asyncio.sleep(1)
         latest_price = get_latest_price()
+
+        # Запоминаем максимум за 10 секунд
         if max_price is None or latest_price > max_price:
             max_price = latest_price
-        else:
-            print(f"📉 Цена начала падать: {latest_price}, продаём!")
-            # place_order("SELL", 0.001)  # Продаём 0.001 BTC
-            log_to_db("SELL",f"Текущая цена BTC: {latest_price} Залочено {target_price}")
-            stop_ws_monitoring()
-            return
 
-    print(f"⏳ 10 секунд прошло, продаём по {max_price}!")
-    # place_order("SELL", 0.001)
-    log_to_db("SELL", f"Текущая цена BTC: {max_price} Залочено {target_price}")
+        print(f"📊 [{i + 1}/10] Цена BTC: {latest_price}, макс: {max_price}")
+
+    if max_price < start_price * 1.001:  # Если цена не пошла вверх на 0.1%, продаём
+        print(f"✅ Цена стабилизировалась, продаём по {max_price}!")
+        # place_order("SELL", 0.001)
+        log_to_db("SELL", f"Продажа BTC по {max_price}, старт был {start_price}")
+        # await send_telegram_notification(f"🚀 Авто-продажа! Продали BTC по {max_price} USDT!")
+    else:
+        print(f"❌ Цена ещё растёт, ждём дальше.")
+        # await send_telegram_notification(f"⏳ Цена растёт, не продаём! Макс: {max_price} USDT")
+
     stop_ws_monitoring()
+
+    # for _ in range(10):
+    #     await asyncio.sleep(1)
+    #     latest_price = get_latest_price()
+    #     if max_price is None or latest_price > max_price:
+    #         max_price = latest_price
+    #     else:
+    #         print(f"📉 Цена начала падать: {latest_price}, продаём!")
+    #         # place_order("SELL", 0.001)  # Продаём 0.001 BTC
+    #         log_to_db("SELL",f"Текущая цена BTC: {latest_price} Залочено {target_price}")
+    #         stop_ws_monitoring()
+    #         return
+    #
+    # print(f"⏳ 10 секунд прошло, продаём по {max_price}!")
+    # # place_order("SELL", 0.001)
+    # log_to_db("SELL", f"Текущая цена BTC: {max_price} Залочено {target_price}")
+    # stop_ws_monitoring()
 
 def get_latest_price():
     """Получает текущую цену BTC (из WebSocket)"""

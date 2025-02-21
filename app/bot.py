@@ -453,6 +453,7 @@ async def check_auto_sell_button(message):
 async def cancel_auto_sell_button(message):
     await cancel_auto_sell(message)
 
+
 async def main():
     logger.info("Бот запущен")
     # asyncio.create_task(rsi_alert_loop())  # Запускаем мониторинг RSI
