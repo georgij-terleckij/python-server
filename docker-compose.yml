@@ -1,28 +1,6 @@
 version: '3.8'
 
 services:
-  bot:
-    build: .
-    container_name: binance_bot
-    volumes:
-      - ./logs:/app/logs
-    restart: always
-    command: python app/bot.py
-
-  flask:
-    build: .
-    container_name: flask_app
-    environment:
-      - PYTHONPATH=/app
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./logs:/app/logs
-    depends_on:
-      - bot
-    restart: always
-    command: python app/flask_app.py
-
   mysql:
     image: mysql:8.0
     container_name: mysql_db
@@ -36,6 +14,31 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     restart: always
+
+  bot:
+    build: .
+    container_name: binance_bot
+    depends_on:
+      - mysql  # Ждём MySQL перед стартом бота
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+    command: python app/bot.py
+
+  flask:
+    build: .
+    container_name: flask_app
+    depends_on:
+      - mysql  # Ждём MySQL перед стартом Flask
+      - bot
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+    command: python app/flask_app.py
 
 volumes:
   mysql_data:

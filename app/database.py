@@ -1,5 +1,6 @@
 import mysql.connector
 import os
+import time
 
 DB_CONFIG = {
     "host": "mysql",
@@ -8,8 +9,18 @@ DB_CONFIG = {
     "database": os.getenv("MYSQL_DATABASE", "bot"),
 }
 
+
 def get_db_connection():
-    return mysql.connector.connect(**DB_CONFIG)
+    """Пытаемся подключиться к MySQL с повторными попытками"""
+    retries = 10  # Увеличиваем количество попыток
+    for i in range(retries):
+        try:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            return conn
+        except mysql.connector.Error as e:
+            print(f"⚠️ MySQ не доступен, попытка {i+1}/{retries}... Ждём 5 сек")
+            time.sleep(5)
+    raise Exception("❌ Не удалось подключиться к MySQL! Проверь настройки.")
 
 def log_to_db(level, message):
     try:
@@ -23,6 +34,7 @@ def log_to_db(level, message):
         print(f"Ошибка логирования: {e}")
 
 def init_db():
+    """Создаёт таблицу логов, если её нет"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -37,5 +49,5 @@ def init_db():
     cursor.close()
     conn.close()
 
-# Создаём таблицу при запуске контейнера
+# Инициализируем БД при запуске
 init_db()
